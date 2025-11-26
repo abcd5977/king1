@@ -1,0 +1,260 @@
+import os
+import re
+import sys
+import time
+import asyncio
+import requests
+import m3u8
+import core as helper
+from utils import progress_bar
+from vars import api_id, api_hash, bot_token, auth_users, sudo_user, log_channel, txt_channel
+from aiohttp import ClientSession
+from pyromod import listen
+from subprocess import getstatusoutput
+from pyrogram import Client, filters
+from pyrogram.types import Message
+from pyrogram.errors import FloodWait
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+bot = Client(
+    "bot",
+    api_id=api_id,
+    api_hash=api_hash,
+    bot_token=bot_token
+)
+
+@bot.on_message(filters.command(["start"]))
+async def start_handler(bot: Client, m: Message):
+    await m.reply_text("Hi!\n\nGive /classplus Command and send me Text file to Download.\n")
+
+@bot.on_message(filters.command("restart"))
+async def restart_handler(_, m: Message):
+    await m.reply_text("**I'm Restarted**🚦", True)
+    os.execl(sys.executable, sys.executable, *sys.argv)
+
+@bot.on_message(filters.command("terms"))
+async def terms_handler(bot: Client, m: Message):
+    terms_text = (
+        "Dear user,\n\nWelcome to our video downloader bot on Telegram. Before you start using our bot, please read these terms and conditions carefully.\n\n"
+        "By using our bot, you agree to the following terms and conditions:\n\n"
+        "1. Our bot is intended for personal, non-commercial use only. You are responsible for any content that you download through our bot and you should ensure that you have the necessary permissions and rights to use and share the content.\n\n"
+        "2. Downloading copyrighted content through our bot is strictly prohibited. If we receive any complaints of copyright infringement, we reserve the right to take down the infringing content and terminate the user's access to our bot.\n\n"
+        "3. We do not store any of your personal data or download history. Your privacy and security are important to us, and we have taken all necessary measures to ensure that your information is safe and protected.\n\n"
+        "4. We reserve the right to suspend or terminate the bot's services at any time and for any reason.\n\n"
+        "5. By using our bot, you agree to indemnify and hold us harmless from any claims, damages,\n"
+        "or losses arising from your use of our bot.\n\n"
+        "If you have any questions or concerns about our terms and conditions, please contact us.\n\n"
+        "Thank you for using our video downloader bot on Telegram.\n\nBest regards,\nRishav"
+    )
+    await m.reply_text(terms_text)
+
+@bot.on_message(filters.command(["classplus"]))
+async def classplus_handler(bot: Client, m: Message):
+    editable = await m.reply_text('Hi\n\nI am Ready to download. Send me a text file »')
+    input_msg: Message = await bot.listen(editable.chat.id)
+    file_path = await input_msg.download()
+    await input_msg.delete()
+
+    # Create downloads directory for this user if not exists
+    path = f"./downloads/{m.chat.id}"
+    os.makedirs(path, exist_ok=True)
+
+    try:
+        with open(file_path, "r") as f:
+            content = f.read()
+        content = content.split("\n")
+        links = []
+        for line in content:
+            if line.strip():
+                parts = line.split("://", 1)
+                if len(parts) == 2:
+                    links.append(parts)
+        os.remove(file_path)
+    except Exception:
+        await m.reply_text("Invalid file input.")
+        os.remove(file_path)
+        return
+
+    await editable.edit(f"Total links found in Text File are **{len(links)}**\n\nSend from where you want to start downloading (initial is **1**)")
+    input0: Message = await bot.listen(editable.chat.id)
+    raw_text = input0.text
+    await input0.delete()
+
+    await editable.edit("**Enter Batch Name**")
+    input1: Message = await bot.listen(editable.chat.id)
+    raw_text0 = input1.text
+    await input1.delete()
+
+    await editable.edit("**Enter resolution**")
+    input2: Message = await bot.listen(editable.chat.id)
+    raw_text2 = input2.text
+    await input2.delete()
+
+    # Map resolution input to actual resolution string
+    try:
+        if raw_text2 == "144":
+            res = "256x144"
+        elif raw_text2 == "240":
+            res = "426x240"
+        elif raw_text2 == "360":
+            res = "640x360"
+        elif raw_text2 == "480":
+            res = "854x480"
+        elif raw_text2 == "720":
+            res = "1280x720"
+        elif raw_text2 == "1080":
+            res = "1920x1080"
+        else:
+            res = "UN"
+    except Exception:
+        res = "UN"
+
+    await editable.edit("Enter a caption or 'Downloaded by' text to add, otherwise send **no**")
+    input3: Message = await bot.listen(editable.chat.id)
+    raw_text3 = input3.text
+    await input3.delete()
+
+    highlighter = "️ ⁪⁬⁮⁮⁮"
+    MR = highlighter if raw_text3.lower() == 'no' else raw_text3
+
+    await editable.edit("Now send the **Thumb url**\nEg » ```https://telegra.ph/file/0633f8b6a6f110d34f044.jpg```\n\nor send `no`")
+    input6: Message = await bot.listen(editable.chat.id)
+    raw_text6 = input6.text
+    await input6.delete()
+    await editable.delete()
+
+    thumb = raw_text6
+    if thumb.startswith("http://") or thumb.startswith("https://"):
+        getstatusoutput(f"wget '{thumb}' -O 'thumb.jpg'")
+        thumb = "thumb.jpg"
+    else:
+        thumb = "no"
+
+    if len(links) == 1:
+        count = 1
+    else:
+        try:
+            count = int(raw_text)
+        except ValueError:
+            count = 1
+
+    try:
+        for i in range(count - 1, len(links)):
+            # Prepare URL
+            V = links[i][1].replace("file/d/", "uc?export=download&id=").replace("www.youtube-nocookie.com/embed", "youtu.be").replace("?modestbranding=1", "").replace("/view?usp=sharing", "")
+            url = "https://" + V
+
+            # Special URL handling
+            if "visionias" in url:
+                async with ClientSession() as session:
+                    async with session.get(url, headers={
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Cache-Control': 'no-cache',
+                        'Connection': 'keep-alive',
+                        'Pragma': 'no-cache',
+                        'Referer': 'http://www.visionias.in/',
+                        'Sec-Fetch-Dest': 'iframe',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'cross-site',
+                        'Upgrade-Insecure-Requests': '1',
+                        'User-Agent': 'Mozilla/5.0 (Linux; Android 12; RMX2121) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Mobile Safari/537.36',
+                        'sec-ch-ua': '"Chromium";v="107", "Not=A?Brand";v="24"',
+                        'sec-ch-ua-mobile': '?1',
+                        'sec-ch-ua-platform': '"Android"',
+                    }) as resp:
+                        text = await resp.text()
+                        match = re.search(r"(https://.*?playlist.m3u8.*?)\"", text)
+                        if match:
+                            url = match.group(1)
+
+            elif "edge.api.brightcove.com" in url:
+                b = 'bcov_auth=eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJpYXQiOjE3MjM5ODg5NDQsImNvbiI6eyJpc0FkbWluIjpmYWxzZSwiYXVzZXIiOiJVMFZ6TkdGU2NuQlZjR3h5TkZwV09FYzBURGxOZHowOSIsImlkIjoiYWtOblpHSlVWUzlzUzB0RFpERlJaMUJtTVZwRVVUMDkiLCJmaXJzdF9uYW1lIjoiY2xjck0wWnpaWGhoWkhoemQyMXVVV3hSVlZwc1p6MDkiLCJlbWFpbCI6IlJFOVhVVTV6TWl0eVNXOU5aMDFhVGk5VGRIUmFVbWRhV2pWcVEyTldTa0pNVVZNMUwyMUxlRkpUWnowPSIsInBob25lIjoiYjJsR1UwWkRUakpOYjAxWVVITnBVekVyTDBwWVFUMDkiLCJhdmF0YXIiOiJLM1ZzY1M4elMwcDBRbmxrYms4M1JEbHZla05pVVQwOSIsInJlZmVycmFsX2NvZGUiOiJSVUpVZERSMGEwbDBURXhXZGxwWFYzbHFLelpMVVQwOSIsImRldmljZV90eXBlIjoiYW5kcm9pZCIsImRldmljZV92ZXJzaW9uIjoidXBwZXIgdGhhbiAzMSIsImRldmljZV9tb2RlbCI6IlhpYW9NaSBNMjAwN0oxN0MiLCJyZW1vdGVfYWRkciI6IjQ0LjE5Mi4xMjAuMTU5In19.blaAt5iAFST3RDAuBzXnC9hD6NALfx0Jyuc21J3p-uLUcFXW7gOnE2fNqRENwcTTE62-tsv3xV6OZtA3lj0wf0JPD8GD9umMMoLva45SPaxccFP0vHAfoC0wzc4U_Yr5-FnIBv-S6Qhy7IltO7EnMgxHeNhHlmk782-JGEqphYZV4wkcd_GAIpkRo55J6JoF17hdAAzTe-_DkrTlTUI6xBvbR1RvS5n9PZ5UG6LuQiv9MZqHUkLDOmdSc1OJw3o9-YXGV_98b5ysa66oCXHLW2i9u0C98WDNlDGn0kyBVMLrBMvrzZajmsjsC0jyh9T0eY3LvcNnUIl7HSqJ471asQ'
+                url = url.split("bcov_auth")[0] + b
+
+            elif "apps-s3-jw-prod.utkarshapp.com" in url:
+                if 'enc_plain_mp4' in url:
+                    url = url.rsplit("/", 1)[0] + f"/{res}.mp4"
+                elif 'Key-Pair-Id' in url:
+                    url = None
+                elif '.m3u8' in url:
+                    playlist = m3u8.loads(requests.get(url).text)
+                    q = playlist.data['playlists'][1]['uri'].split("/")[0]
+                    x = url.split("/")[5]
+                    base_url = url.replace(x, "")
+                    url = playlist.data['playlists'][1]['uri'].replace(q + "/", base_url)
+
+            elif 'videos.classplusapp' in url or 'tencdn.classplusapp' in url or 'media-cdn' in url or 'webvideos' in url or 'drmcdni' in url:
+                headers = {'x-access-token': 'eyJjb3Vyc2VJZCI6IjQ1NjY4NyIsInR1dG9ySWQiOm51bGwsIm9yZ0lkIjo0ODA2MTksImNhdGVnb3J5SWQiOm51bGx9'}
+                url = requests.get(f'https://api.classplusapp.com/cams/uploader/video/jw-signed-url?url={url}', headers=headers).json().get('url')
+
+            elif '/master.mpd' in url:
+                id_ = url.split("/")[-2]
+                url = f"https://d26g5bnklkwsh4.cloudfront.net/{id_}/master.m3u8"
+
+            # Clean name for file
+            name1 = links[i][0].replace("\t", "").replace(":", "").replace("/", "").replace("+", "").replace("#", "").replace("|", "").replace("@", "").replace("*", "").replace(".", "").replace("https", "").replace("http", "").strip()
+            name = f'{str(count).zfill(3)}) {name1[:60]}'
+
+            # Format selection for yt-dlp
+            if "youtu" in url:
+                ytf = f"b[height<={raw_text2}][ext=mp4]/bv[height<={raw_text2}][ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
+            else:
+                ytf = f"b[height<={raw_text2}]/bv[height<={raw_text2}]+ba/b/bv+ba"
+
+            if "jw-prod" in url:
+                cmd = f'yt-dlp -o "{name}.mp4" "{url}"'
+            else:
+                cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{name}.mp4"'
+
+            try:
+                cc = f'** {str(count).zfill(3)}.** {name1}{MR}.mkv\n**Batch »** {raw_text0}\n\n'
+                cc1 = f'** {str(count).zfill(3)}.** {name1}{MR}.pdf \n**Batch »** {raw_text0}\n\n'
+
+                if "drive" in url:
+                    try:
+                        ka = await helper.download(url, name)
+                        await bot.send_document(chat_id=m.chat.id, document=ka, caption=cc1)
+                        count += 1
+                        os.remove(ka)
+                        await asyncio.sleep(1)
+                    except FloodWait as e:
+                        await m.reply_text(str(e))
+                        await asyncio.sleep(e.x)
+                        continue
+
+                elif ".pdf" in url:
+                    try:
+                        cmd_pdf = f'yt-dlp -o "{name}.pdf" "{url}" -R 25 --fragment-retries 25'
+                        os.system(cmd_pdf)
+                        await bot.send_document(chat_id=m.chat.id, document=f'{name}.pdf', caption=cc1)
+                        count += 1
+                        os.remove(f'{name}.pdf')
+                    except FloodWait as e:
+                        await m.reply_text(str(e))
+                        await asyncio.sleep(e.x)
+                        continue
+
+                else:
+                    show_msg = f"**⥥ Downloading »**\n\n**Name »** `{name}\nQuality » {raw_text2}`\n\n**Piracy is illegal 🚫**\n\nEnter /terms To know our terms and conditions."
+                    prog = await m.reply_text(show_msg)
+                    res_file = await helper.download_video(url, cmd, name)
+                    filename = res_file
+                    await prog.delete()
+                    await helper.send_vid(bot, m, cc, filename, thumb, name, prog)
+                    count += 1
+                    await asyncio.sleep(1)
+
+            except Exception as e:
+                await m.reply_text(
+                    f"**Downloading Interrupted**\n{str(e)}\n**Name** » {name}\n**Link** » `{url}`"
+                )
+                continue
+
+    except Exception as e:
+        await m.reply_text(str(e))
+
+    await m.reply_text("Done")
+
+if __name__ == "__main__":
+    bot.run()
